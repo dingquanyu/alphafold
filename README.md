@@ -7,6 +7,7 @@ v2. For simplicity, we refer to this model as AlphaFold throughout the rest of
 this document.
 
 We also provide:
+test submodule update
 
 1.  An implementation of AlphaFold-Multimer. This represents a work in progress
     and AlphaFold-Multimer isn't expected to be as stable as our monomer
