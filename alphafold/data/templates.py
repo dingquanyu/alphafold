@@ -98,7 +98,7 @@ TEMPLATE_FEATURES = {
 def _get_pdb_id_and_chain(hit: parsers.TemplateHit) -> Tuple[str, str]:
   """Returns PDB id and chain id for an HHSearch Hit."""
   # PDB ID: 4 letters. Chain ID: 1+ alphanumeric letters or "." if unknown.
-  id_match = re.match(r'[a-zA-Z\d]{4}_[a-zA-Z0-9.]+', hit.name)
+  id_match = re.match(r'[a-zA-Z\d]{4,200}_[a-zA-Z0-9.]+', hit.name)
   if not id_match:
     raise ValueError(f'hit.name did not start with PDBID_chain: {hit.name}')
   pdb_id, chain_id = id_match.group(0).split('_')
