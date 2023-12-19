@@ -26,7 +26,7 @@ from alphafold.data.tools import hhsearch
 from alphafold.data.tools import hmmsearch
 from alphafold.data.tools import jackhmmer
 import numpy as np
-
+import asyncio
 # Internal import (7716).
 
 FeatureDict = MutableMapping[str, np.ndarray]
@@ -147,6 +147,69 @@ class DataPipeline:
     self.uniref_max_hits = uniref_max_hits
     self.use_precomputed_msas = use_precomputed_msas
 
+  async def run_jackhmmer_uniref90(self, input_fasta_path, uniref90_out_path):
+    """An async function that runs alignment against uniref90"""
+    jackhmmer_uniref90_result = run_msa_tool(
+        msa_runner=self.jackhmmer_uniref90_runner,
+        input_fasta_path=input_fasta_path,
+        msa_out_path=uniref90_out_path,
+        msa_format='sto',
+        use_precomputed_msas=self.use_precomputed_msas,
+        max_sto_sequences=self.uniref_max_hits)
+    msa_for_templates = jackhmmer_uniref90_result['sto']
+    msa_for_templates = parsers.deduplicate_stockholm_msa(msa_for_templates)
+    msa_for_templates = parsers.remove_empty_columns_from_stockholm_msa(
+        msa_for_templates)
+    return jackhmmer_uniref90_result, msa_for_templates
+
+  async def run_jackhmmer_mgnify(self, input_fasta_path, mgnify_out_path):
+    """An async function that runs msa alignment against mgnify database"""
+    jackhmmer_mgnify_result = run_msa_tool(
+        msa_runner=self.jackhmmer_mgnify_runner,
+        input_fasta_path=input_fasta_path,
+        msa_out_path=mgnify_out_path,
+        msa_format='sto',
+        use_precomputed_msas=self.use_precomputed_msas,
+        max_sto_sequences=self.mgnify_max_hits)
+    return jackhmmer_mgnify_result
+
+  async def run_bfd_alignments(self, msa_output_dir, input_fasta_path):
+    """An async function that runs msa alignment against bfd database"""
+    if self._use_small_bfd:
+      bfd_out_path = os.path.join(msa_output_dir, 'small_bfd_hits.sto')
+      jackhmmer_small_bfd_result = run_msa_tool(
+          msa_runner=self.jackhmmer_small_bfd_runner,
+          input_fasta_path=input_fasta_path,
+          msa_out_path=bfd_out_path,
+          msa_format='sto',
+          use_precomputed_msas=self.use_precomputed_msas)
+      bfd_msa = parsers.parse_stockholm(jackhmmer_small_bfd_result['sto'])
+    else:
+      bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniref_hits.a3m')
+      hhblits_bfd_uniref_result = run_msa_tool(
+          msa_runner=self.hhblits_bfd_uniref_runner,
+          input_fasta_path=input_fasta_path,
+          msa_out_path=bfd_out_path,
+          msa_format='a3m',
+          use_precomputed_msas=self.use_precomputed_msas)
+      bfd_msa = parsers.parse_a3m(hhblits_bfd_uniref_result['a3m'])
+    
+    return bfd_msa
+  
+  async def run_all_msa_runners(self, input_fasta_path:str, 
+                                uniref90_out_path:str, mgnify_out_path:str,
+                                msa_output_dir:str):
+    """An async function that creates all async tasks and run them in parallel"""
+    task1 = asyncio.create_task(self.run_jackhmmer_uniref90(input_fasta_path, uniref90_out_path))
+    task2 = asyncio.create_task(self.run_jackhmmer_mgnify(input_fasta_path, mgnify_out_path))
+    task3 = asyncio.create_task(self.run_bfd_alignments(msa_output_dir, input_fasta_path))
+    jackhmmer_uniref90_result, msa_for_templates = await task1
+    jackhmmer_mgnify_result = await task2
+    bfd_msa = await task3
+
+    return {"uniref90_results": (jackhmmer_uniref90_result, msa_for_templates),
+            "mgnify_results": jackhmmer_mgnify_result, "bfd_results": bfd_msa}
+
   def process(self, input_fasta_path: str, msa_output_dir: str) -> FeatureDict:
     """Runs alignment tools on the input sequence and creates features."""
     with open(input_fasta_path) as f:
@@ -160,27 +223,15 @@ class DataPipeline:
     num_res = len(input_sequence)
 
     uniref90_out_path = os.path.join(msa_output_dir, 'uniref90_hits.sto')
-    jackhmmer_uniref90_result = run_msa_tool(
-        msa_runner=self.jackhmmer_uniref90_runner,
-        input_fasta_path=input_fasta_path,
-        msa_out_path=uniref90_out_path,
-        msa_format='sto',
-        use_precomputed_msas=self.use_precomputed_msas,
-        max_sto_sequences=self.uniref_max_hits)
+    
     mgnify_out_path = os.path.join(msa_output_dir, 'mgnify_hits.sto')
-    jackhmmer_mgnify_result = run_msa_tool(
-        msa_runner=self.jackhmmer_mgnify_runner,
-        input_fasta_path=input_fasta_path,
-        msa_out_path=mgnify_out_path,
-        msa_format='sto',
-        use_precomputed_msas=self.use_precomputed_msas,
-        max_sto_sequences=self.mgnify_max_hits)
 
-    msa_for_templates = jackhmmer_uniref90_result['sto']
-    msa_for_templates = parsers.deduplicate_stockholm_msa(msa_for_templates)
-    msa_for_templates = parsers.remove_empty_columns_from_stockholm_msa(
-        msa_for_templates)
-
+    msa_results = asyncio.run(self.run_all_msa_runners(input_fasta_path,uniref90_out_path,
+                                                       mgnify_out_path,msa_output_dir))
+    jackhmmer_uniref90_result, msa_for_templates = msa_results['uniref90_results']
+    jackhmmer_mgnify_result = msa_results['mgnify_results']
+    bfd_msa = msa_results['bfd_results']
+    
     if self.template_searcher.input_format == 'sto':
       pdb_templates_result = self.template_searcher.query(msa_for_templates)
     elif self.template_searcher.input_format == 'a3m':
@@ -200,25 +251,6 @@ class DataPipeline:
 
     pdb_template_hits = self.template_searcher.get_template_hits(
         output_string=pdb_templates_result, input_sequence=input_sequence)
-
-    if self._use_small_bfd:
-      bfd_out_path = os.path.join(msa_output_dir, 'small_bfd_hits.sto')
-      jackhmmer_small_bfd_result = run_msa_tool(
-          msa_runner=self.jackhmmer_small_bfd_runner,
-          input_fasta_path=input_fasta_path,
-          msa_out_path=bfd_out_path,
-          msa_format='sto',
-          use_precomputed_msas=self.use_precomputed_msas)
-      bfd_msa = parsers.parse_stockholm(jackhmmer_small_bfd_result['sto'])
-    else:
-      bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniref_hits.a3m')
-      hhblits_bfd_uniref_result = run_msa_tool(
-          msa_runner=self.hhblits_bfd_uniref_runner,
-          input_fasta_path=input_fasta_path,
-          msa_out_path=bfd_out_path,
-          msa_format='a3m',
-          use_precomputed_msas=self.use_precomputed_msas)
-      bfd_msa = parsers.parse_a3m(hhblits_bfd_uniref_result['a3m'])
 
     templates_result = self.template_featurizer.get_templates(
         query_sequence=input_sequence,
