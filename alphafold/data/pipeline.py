@@ -26,8 +26,8 @@ from alphafold.data.tools import hhsearch
 from alphafold.data.tools import hmmsearch
 from alphafold.data.tools import jackhmmer
 import numpy as np
-import asyncio
-from functools import partial
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
 # Internal import (7716).
 
 FeatureDict = MutableMapping[str, np.ndarray]
@@ -148,11 +148,10 @@ class DataPipeline:
     self.uniref_max_hits = uniref_max_hits
     self.use_precomputed_msas = use_precomputed_msas
 
-  async def run_jackhmmer_uniref90(self, input_fasta_path, uniref90_out_path):
+  def run_jackhmmer_uniref90(self, input_fasta_path, uniref90_out_path):
     """An async function that runs alignment against uniref90"""
-    print(f"############# line 152 now running in async way")
-    loop = asyncio.get_event_loop()
-    jackhmmer_uniref90_result = await run_msa_tool(
+    logging.info(f"Now running uniref90 alignment concurrently")
+    jackhmmer_uniref90_result = run_msa_tool(
         msa_runner=self.jackhmmer_uniref90_runner,
         input_fasta_path=input_fasta_path,
         msa_out_path=uniref90_out_path,
@@ -165,11 +164,10 @@ class DataPipeline:
         msa_for_templates)
     return jackhmmer_uniref90_result, msa_for_templates
 
-  async def run_jackhmmer_mgnify(self, input_fasta_path, mgnify_out_path):
+  def run_jackhmmer_mgnify(self, input_fasta_path, mgnify_out_path):
     """An async function that runs msa alignment against mgnify database"""
-    print(f"############# line 168 now running in async way")
-    loop = asyncio.get_event_loop()
-    jackhmmer_mgnify_result = await self.run_msa_tool_async(
+    logging.info(f"Now running mgnify alignment concurrently")
+    jackhmmer_mgnify_result = run_msa_tool(
         msa_runner=self.jackhmmer_mgnify_runner,
         input_fasta_path=input_fasta_path,
         msa_out_path=mgnify_out_path,
@@ -178,13 +176,12 @@ class DataPipeline:
         max_sto_sequences=self.mgnify_max_hits)
     return jackhmmer_mgnify_result
 
-  async def run_bfd_alignments(self, msa_output_dir, input_fasta_path):
+  def run_bfd_alignments(self, msa_output_dir, input_fasta_path):
     """An async function that runs msa alignment against bfd database"""
-    print(f"############# line 180 now running in async way")
-    loop = asyncio.get_event_loop()
+    logging.info(f"Now running bfd alignment concurrently")
     if self._use_small_bfd:
       bfd_out_path = os.path.join(msa_output_dir, 'small_bfd_hits.sto')
-      jackhmmer_small_bfd_result = await self.run_msa_tool_async(
+      jackhmmer_small_bfd_result = run_msa_tool(
           msa_runner=self.jackhmmer_small_bfd_runner,
           input_fasta_path=input_fasta_path,
           msa_out_path=bfd_out_path,
@@ -193,7 +190,7 @@ class DataPipeline:
       bfd_msa = parsers.parse_stockholm(jackhmmer_small_bfd_result['sto'])
     else:
       bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniref_hits.a3m')
-      hhblits_bfd_uniref_result = await self.run_msa_tool_async(
+      hhblits_bfd_uniref_result = run_msa_tool(
           msa_runner=self.hhblits_bfd_uniref_runner,
           input_fasta_path=input_fasta_path,
           msa_out_path=bfd_out_path,
@@ -202,23 +199,19 @@ class DataPipeline:
       bfd_msa = parsers.parse_a3m(hhblits_bfd_uniref_result['a3m'])
     
     return bfd_msa
-  
-  async def run_msa_tool_async(self,**kwargs):
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, run_msa_tool, **kwargs)
 
-  async def run_all_msa_runners(self, input_fasta_path:str, 
+  def run_all_msa_runners(self, input_fasta_path:str, 
                                 uniref90_out_path:str, mgnify_out_path:str,
                                 msa_output_dir:str):
     """An async function that creates all async tasks and run them in parallel"""
-    task1 = self.run_jackhmmer_uniref90(input_fasta_path, uniref90_out_path)
-    task2 = self.run_jackhmmer_mgnify(input_fasta_path, mgnify_out_path)
-    task3 = self.run_bfd_alignments(msa_output_dir, input_fasta_path)
-    results = await asyncio.gather(task1, task2, task3)
-    jackhmmer_uniref90_result, msa_for_templates = results[0]
-    jackhmmer_mgnify_result = results[1]
-    bfd_msa = results[2]
-
+    with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
+      uniref_msa_process = [executor.submit(self.run_jackhmmer_uniref90,*(input_fasta_path, uniref90_out_path))]
+      mgnify_msa_process = [executor.submit(self.run_jackhmmer_mgnify,*(input_fasta_path, mgnify_out_path))]
+      bfd_msa_process = [executor.submit(self.run_bfd_alignments, *(msa_output_dir, input_fasta_path))]
+      jackhmmer_uniref90_result, msa_for_templates = [process.result() for process in as_completed(uniref_msa_process)][0]
+      jackhmmer_mgnify_result = [process.result() for process in as_completed(mgnify_msa_process)][0]
+      bfd_msa = [process.result() for process in as_completed(bfd_msa_process)][0]
+      
     return {"uniref90_results": (jackhmmer_uniref90_result, msa_for_templates),
             "mgnify_results": jackhmmer_mgnify_result, "bfd_results": bfd_msa}
 
@@ -238,8 +231,8 @@ class DataPipeline:
     
     mgnify_out_path = os.path.join(msa_output_dir, 'mgnify_hits.sto')
 
-    msa_results = asyncio.run(self.run_all_msa_runners(input_fasta_path,uniref90_out_path,
-                                                       mgnify_out_path,msa_output_dir))
+    msa_results = self.run_all_msa_runners(input_fasta_path,uniref90_out_path,
+                                                       mgnify_out_path,msa_output_dir)
     jackhmmer_uniref90_result, msa_for_templates = msa_results['uniref90_results']
     jackhmmer_mgnify_result = msa_results['mgnify_results']
     bfd_msa = msa_results['bfd_results']
