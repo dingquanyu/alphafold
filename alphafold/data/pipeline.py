@@ -85,16 +85,16 @@ def make_msa_features(msas: Sequence[parsers.Msa]) -> FeatureDict:
   return features
 
 
-async def run_msa_tool(msa_runner, input_fasta_path: str, msa_out_path: str,
+def run_msa_tool(msa_runner, input_fasta_path: str, msa_out_path: str,
                  msa_format: str, use_precomputed_msas: bool,
                  max_sto_sequences: Optional[int] = None
                  ) -> Mapping[str, Any]:
   """Runs an MSA tool, checking if output already exists first."""
   if not use_precomputed_msas or not os.path.exists(msa_out_path):
     if msa_format == 'sto' and max_sto_sequences is not None:
-       result = await msa_runner.query(input_fasta_path, max_sto_sequences)[0]  # pytype: disable=wrong-arg-count
+       result = msa_runner.query(input_fasta_path, max_sto_sequences)[0]  # pytype: disable=wrong-arg-count
     else:
-      result = await msa_runner.query(input_fasta_path)[0]
+      result = msa_runner.query(input_fasta_path)[0]
     with open(msa_out_path, 'w') as f:
       f.write(result[msa_format])
   else:
@@ -169,7 +169,7 @@ class DataPipeline:
     """An async function that runs msa alignment against mgnify database"""
     print(f"############# line 168 now running in async way")
     loop = asyncio.get_event_loop()
-    jackhmmer_mgnify_result = await run_msa_tool(
+    jackhmmer_mgnify_result = await self.run_msa_tool_async(
         msa_runner=self.jackhmmer_mgnify_runner,
         input_fasta_path=input_fasta_path,
         msa_out_path=mgnify_out_path,
@@ -184,7 +184,7 @@ class DataPipeline:
     loop = asyncio.get_event_loop()
     if self._use_small_bfd:
       bfd_out_path = os.path.join(msa_output_dir, 'small_bfd_hits.sto')
-      jackhmmer_small_bfd_result = await run_msa_tool(
+      jackhmmer_small_bfd_result = await self.run_msa_tool_async(
           msa_runner=self.jackhmmer_small_bfd_runner,
           input_fasta_path=input_fasta_path,
           msa_out_path=bfd_out_path,
@@ -193,7 +193,7 @@ class DataPipeline:
       bfd_msa = parsers.parse_stockholm(jackhmmer_small_bfd_result['sto'])
     else:
       bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniref_hits.a3m')
-      hhblits_bfd_uniref_result = await run_msa_tool(
+      hhblits_bfd_uniref_result = await self.run_msa_tool_async(
           msa_runner=self.hhblits_bfd_uniref_runner,
           input_fasta_path=input_fasta_path,
           msa_out_path=bfd_out_path,
@@ -203,6 +203,10 @@ class DataPipeline:
     
     return bfd_msa
   
+  async def run_msa_tool_async(self,**kwargs):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, run_msa_tool, **kwargs)
+
   async def run_all_msa_runners(self, input_fasta_path:str, 
                                 uniref90_out_path:str, mgnify_out_path:str,
                                 msa_output_dir:str):
