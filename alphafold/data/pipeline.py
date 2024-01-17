@@ -27,7 +27,6 @@ from alphafold.data.tools import hmmsearch
 from alphafold.data.tools import jackhmmer
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor, as_completed
-import multiprocessing
 # Internal import (7716).
 
 FeatureDict = MutableMapping[str, np.ndarray]
@@ -204,7 +203,7 @@ class DataPipeline:
                                 uniref90_out_path:str, mgnify_out_path:str,
                                 msa_output_dir:str):
     """An async function that creates all async tasks and run them in parallel"""
-    with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
+    with ProcessPoolExecutor(max_workers=5) as executor:
       uniref_msa_process = [executor.submit(self.run_jackhmmer_uniref90,*(input_fasta_path, uniref90_out_path))]
       mgnify_msa_process = [executor.submit(self.run_jackhmmer_mgnify,*(input_fasta_path, mgnify_out_path))]
       bfd_msa_process = [executor.submit(self.run_bfd_alignments, *(msa_output_dir, input_fasta_path))]
