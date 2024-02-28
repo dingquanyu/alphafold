@@ -203,6 +203,7 @@ class DataPipeline:
                                 uniref90_out_path:str, mgnify_out_path:str,
                                 msa_output_dir:str):
     """An async function that creates all async tasks and run them in parallel"""
+    logging.info(f"Now running MSA runners in parallel.")
     with ProcessPoolExecutor(max_workers=5) as executor:
       uniref_msa_process = [executor.submit(self.run_jackhmmer_uniref90,*(input_fasta_path, uniref90_out_path))]
       mgnify_msa_process = [executor.submit(self.run_jackhmmer_mgnify,*(input_fasta_path, mgnify_out_path))]

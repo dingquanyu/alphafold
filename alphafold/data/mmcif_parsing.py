@@ -189,6 +189,7 @@ def parse(*,
     handle = io.StringIO(mmcif_string)
     full_structure = parser.get_structure('', handle)
     first_model_structure = _get_first_model(full_structure)
+
     # Extract the _mmcif_dict from the parser, which contains useful fields not
     # reflected in the Biopython structure.
     parsed_info = parser._mmcif_dict  # pylint:disable=protected-access
@@ -277,6 +278,7 @@ def parse(*,
 
     return ParsingResult(mmcif_object=mmcif_object, errors=errors)
   except Exception as e:  # pylint:disable=broad-except
+    print(f"##### line 281 mmcif_parsing failed to parse mmcif file")
     errors[(file_id, '')] = e
     if not catch_all_errors:
       raise
