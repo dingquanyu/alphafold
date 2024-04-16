@@ -172,6 +172,8 @@ class RunModel:
     jax.tree_map(lambda x: x.block_until_ready(), result)
     # result.update(
     #     get_confidence_metrics(result, multimer_mode=self.multimer_mode))
+    result.update({"plddt": confidence.compute_plddt(
+      result['predicted_lddt']['logits'])})
     logging.info('Output shape was %s',
                  tree.map_structure(lambda x: x.shape, result))
     return result
